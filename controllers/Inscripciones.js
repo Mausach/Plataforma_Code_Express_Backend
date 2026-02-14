@@ -54,7 +54,7 @@ const getInscripcionesComisionCompletas = async (req, res) => {
                 motivo_baja: inscripcion.motivo_baja     // ← NUEVO
             };
 
-            if (usuario.rol === "Alumno") {
+            if (usuario.rol === "alumno") {
                 alumnos.push(item);
             } else if (usuario.rol === "profe") {
                 profesores.push(item);

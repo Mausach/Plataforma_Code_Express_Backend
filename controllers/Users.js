@@ -44,7 +44,7 @@ const crearUsuario = async (req, res) => {
             genero,
             telefono,
             provincia,
-            rol: rol || 'Alumno',
+            rol: rol || 'alumno',
             email,
             password: passwordEncriptada,
             estado: true
