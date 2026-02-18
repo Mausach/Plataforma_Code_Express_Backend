@@ -188,7 +188,7 @@ routerAdmin.post('/comisiones/:id/generar-clases', validarJWTAdmin, [
 
 routerAdmin.get('/comisiones/:id/inscripciones-completas',validarJWTAdmin_profe,getInscripcionesComisionCompletas)
 
-routerAdmin.put('/comisiones/:id/progreso',validarJWTAdmin, actualizarProgresoComision);
+routerAdmin.put('/comisiones/:id/progreso',validarJWTAdmin_profe, actualizarProgresoComision);
 routerAdmin.get('/:id/progreso',validarJWTAdmin, obtenerProgresoComision);
 
 //para inscripciones
@@ -226,7 +226,7 @@ routerAdmin.get('/clases/comision/:comisionId', validarJWTAdmin_profe, obtenerCl
 routerAdmin.put('/clases/:claseId', validarJWTAdmin, actualizarClase);  // 👈 NUEVA RUTA
 
 // ===== RUTAS DE ASISTENCIA =====
-routerAdmin.post('/clases/:claseId/asistencia/batch', validarJWTAdmin, guardarAsistenciaBatch);
+routerAdmin.post('/clases/:claseId/asistencia/batch', validarJWTAdmin_profe, guardarAsistenciaBatch);
 routerAdmin.get('/clases/:claseId/asistencias', validarJWTAdmin, obtenerAsistenciasPorClase);
 
 routerAdmin.get(

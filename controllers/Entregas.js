@@ -12,6 +12,11 @@ const guardarEntrega = async (req, res) => {
         const {
             comision_id,
             comision_nombre,
+            // 🆕 NUEVOS CAMPOS
+            modulo_id,
+            modulo_nombre,
+            contenido_id,
+            contenido_nombre,
             trabajo_nombre,
             tipo_entrega,
             github_url,
@@ -22,7 +27,7 @@ const guardarEntrega = async (req, res) => {
         } = req.body;
 
 
-        // ===== 1. VALIDACIONES BÁSICAS (SIN BD) =====
+        // ===== 1. VALIDACIONES BÁSICAS =====
         if (!comision_id || !trabajo_nombre || !tipo_entrega) {
             return res.status(400).json({
                 success: false,
@@ -37,6 +42,32 @@ const guardarEntrega = async (req, res) => {
                 msg: 'El ID de comisión no es válido'
             });
         }
+
+        // 🆕 Validar módulo si viene (ahora es requerido)
+        if (!modulo_id) {
+            return res.status(400).json({
+                success: false,
+                msg: 'El ID del módulo es obligatorio'
+            });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(modulo_id)) {
+            return res.status(400).json({
+                success: false,
+                msg: 'El ID del módulo no es válido'
+            });
+        }
+
+        // 🆕 Validar contenido si viene (ahora es requerido)
+        if (!contenido_id) {
+            return res.status(400).json({
+                success: false,
+                msg: 'El ID del contenido es obligatorio'
+            });
+        }
+
+        // El contenido_id puede ser un ObjectId o un string (del front)
+        // No validamos con mongoose.Types.ObjectId.isValid porque puede ser string
 
         // Validar tipo de entrega
         const tiposPermitidos = ["github", "archivo"];
@@ -120,16 +151,13 @@ const guardarEntrega = async (req, res) => {
             }
         }
 
-        // ===== 2. CONSULTAS EN PARALELO (OPTIMIZADAS) =====
+        // ===== 2. CONSULTAS EN PARALELO =====
         const [comisionExiste, usuarioExiste] = await Promise.all([
-            // Verificar que la comisión existe (solo necesitamos saber si existe)
-            Comision_Model.findById(comision_id).lean().select('_id nombre'),
-            
-            // Verificar que el usuario existe (necesitamos sus datos para embeber)
+            Comision_Model.findById(comision_id).lean().select('_id nombre progreso_carrera'),
             Usuario_Model.findById(req.id).lean().select('nombres apellido email dni')
         ]);
 
-        // 3. Verificar resultados de las consultas
+        // 3. Verificar resultados
         if (!comisionExiste) {
             return res.status(404).json({
                 success: false,
@@ -141,6 +169,30 @@ const guardarEntrega = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 msg: 'El usuario no existe'
+            });
+        }
+
+        // 🆕 Validar que el módulo existe en la comisión
+        const moduloEnComision = comisionExiste.progreso_carrera?.find(
+            m => m.modulo_id?.toString() === modulo_id?.toString()
+        );
+
+        if (!moduloEnComision) {
+            return res.status(400).json({
+                success: false,
+                msg: 'El módulo especificado no pertenece a esta comisión'
+            });
+        }
+
+        // 🆕 Validar que el contenido existe en el módulo
+        const contenidoEnModulo = moduloEnComision.contenidos?.find(
+            c => c.contenido_id?.toString() === contenido_id?.toString()
+        );
+
+        if (!contenidoEnModulo) {
+            return res.status(400).json({
+                success: false,
+                msg: 'El contenido especificado no pertenece a este módulo'
             });
         }
 
@@ -156,6 +208,22 @@ const guardarEntrega = async (req, res) => {
         const comisionData = {
             comision_id: comision_id,
             nombre: comision_nombre || comisionExiste.nombre || ''
+        };
+
+        // 🆕 Preparar datos del módulo
+        const moduloData = {
+            modulo_id: modulo_id,
+            nombre: modulo_nombre || moduloEnComision.nombre_modulo || '',
+            orden: moduloEnComision.orden_modulo
+        };
+
+        // 🆕 Preparar datos del contenido
+        const contenidoData = {
+            contenido_id: mongoose.Types.ObjectId.isValid(contenido_id)
+                ? new mongoose.Types.ObjectId(contenido_id)
+                : null,
+            nombre: contenido_nombre || contenidoEnModulo.nombre_contenido || '',
+            contenido_id_str: contenido_id // Guardamos el string original
         };
 
         // Preparar miembros
@@ -179,28 +247,33 @@ const guardarEntrega = async (req, res) => {
         }
 
         // ===== 5. VERIFICAR SI EXISTE ENTREGA PREVIA =====
+        // Ahora verificamos también por módulo y contenido
         const entregaExistente = await Entregas_Models.findOne({
             'alumno.usuario_id': req.id,
             'comision.comision_id': comision_id,
+            'modulo.modulo_id': modulo_id,
+            'contenido.contenido_id_str': contenido_id,
             trabajo_nombre: trabajo_nombre.trim()
         }).lean();
 
         if (entregaExistente) {
             return res.status(409).json({
                 success: false,
-                msg: 'Ya existe una entrega con este nombre para esta comisión'
+                msg: 'Ya existe una entrega con este nombre para este módulo y contenido'
             });
         }
 
-        // ===== 6. CREAR NUEVA ENTREGA =====
+        // ===== 6. CREAR NUEVA ENTREGA (CON MÓDULO Y CONTENIDO) =====
         const nuevaEntrega = new Entregas_Models({
             alumno: alumnoData,
             comision: comisionData,
+            modulo: moduloData,
+            contenido: contenidoData,
             es_grupal: es_grupal || false,
             miembros: miembrosData,
             trabajo_nombre: trabajo_nombre.trim(),
             tipo_entrega: tipo_entrega,
-            ...(tipo_entrega === 'github' 
+            ...(tipo_entrega === 'github'
                 ? { github_url: github_url.trim() }
                 : { archivo_url: archivo_url.trim() }
             ),
@@ -210,7 +283,6 @@ const guardarEntrega = async (req, res) => {
         });
 
         await nuevaEntrega.save();
-        
 
         // ===== 7. RESPUESTA EXITOSA =====
         return res.status(201).json({
@@ -223,7 +295,18 @@ const guardarEntrega = async (req, res) => {
                 fecha_entrega: nuevaEntrega.fecha_entrega,
                 estado: nuevaEntrega.estado,
                 comision: nuevaEntrega.comision.nombre,
-                alumno: `${nuevaEntrega.alumno.nombres} ${nuevaEntrega.alumno.apellido}`
+                modulo: {
+                    id: nuevaEntrega.modulo.modulo_id,
+                    nombre: nuevaEntrega.modulo.nombre,
+                    orden: nuevaEntrega.modulo.orden
+                },
+                contenido: {
+                    id: nuevaEntrega.contenido.contenido_id || nuevaEntrega.contenido.contenido_id_str,
+                    nombre: nuevaEntrega.contenido.nombre
+                },
+                alumno: `${nuevaEntrega.alumno.nombres} ${nuevaEntrega.alumno.apellido}`,
+                es_grupal: nuevaEntrega.es_grupal,
+                cantidad_miembros: nuevaEntrega.miembros?.length || 1
             }
         });
 
@@ -239,7 +322,7 @@ const guardarEntrega = async (req, res) => {
             });
         }
 
-        // Error de índice duplicado (por si acaso)
+        // Error de índice duplicado
         if (error.code === 11000) {
             return res.status(409).json({
                 success: false,
@@ -256,7 +339,7 @@ const guardarEntrega = async (req, res) => {
 };
 
 // ============================================
-// 2. CARGAR TODAS LAS ENTREGAS DE UNA COMISIÓN
+// 2. CARGAR TODAS LAS ENTREGAS DE UNA COMISIÓN (SIN PAGINACIÓN)
 // ============================================
 const cargarEntregasDeComision = async (req, res) => {
     try {
@@ -266,11 +349,8 @@ const cargarEntregasDeComision = async (req, res) => {
             tipo,
             alumno_id,
             desde,
-            hasta,
-            page = 1,
-            limit = 50,
-            ordenar_por = 'fecha_entrega',
-            orden = 'desc'
+            hasta
+            // 👇 Eliminamos page y limit
         } = req.query;
 
         if (!comisionId) {
@@ -288,7 +368,7 @@ const cargarEntregasDeComision = async (req, res) => {
         }
 
         const comisionExiste = await Comision_Model.findById(comisionId)
-            .select('nombre')
+            .select('nombre progreso_carrera')
             .lean();
 
         if (!comisionExiste) {
@@ -340,61 +420,33 @@ const cargarEntregasDeComision = async (req, res) => {
             }
         }
 
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-        const ordenamiento = {};
-        ordenamiento[ordenar_por] = orden === 'desc' ? -1 : 1;
+        // 👇 SIN PAGINACIÓN - traemos TODAS las entregas
+        const entregas = await Entregas_Models.find(filtro)
+            .sort({ fecha_entrega: -1 }) // Más recientes primero
+            .lean();
 
-        const [entregas, total] = await Promise.all([
-            Entregas_Models.find(filtro)
-                .sort(ordenamiento)
-                .skip(skip)
-                .limit(parseInt(limit))
-                .lean(),
-
-            Entregas_Models.countDocuments(filtro)
-        ]);
-
-        let metricas = null;
-        if (page == 1 && Object.keys(req.query).length === 0) {
-            const metricasRaw = await Entregas_Models.aggregate([
-                { $match: { 'comision.comision_id': new mongoose.Types.ObjectId(comisionId) } },
-                {
-                    $group: {
-                        _id: null,
-                        total_entregas: { $sum: 1 },
-                        entregas_github: {
-                            $sum: { $cond: [{ $eq: ['$tipo_entrega', 'github'] }, 1, 0] }
-                        },
-                        entregas_archivo: {
-                            $sum: { $cond: [{ $eq: ['$tipo_entrega', 'archivo'] }, 1, 0] }
-                        },
-                        entregas_pendientes: {
-                            $sum: { $cond: [{ $eq: ['$estado', 'Entregado'] }, 1, 0] }
-                        },
-                        entregas_calificadas: {
-                            $sum: { $cond: [{ $eq: ['$estado', 'Calificado'] }, 1, 0] }
-                        },
-                        entregas_rechazadas: {
-                            $sum: { $cond: [{ $eq: ['$estado', 'Rechazado'] }, 1, 0] }
-                        },
-                        promedio_puntaje: { $avg: '$calificacion.puntaje' }
-                    }
-                }
-            ]);
-
-            if (metricasRaw.length > 0) {
-                metricas = metricasRaw[0];
-            }
-        }
+        // Calculamos métricas
+        const metricas = {
+            total_entregas: entregas.length,
+            entregas_github: entregas.filter(e => e.tipo_entrega === 'github').length,
+            entregas_archivo: entregas.filter(e => e.tipo_entrega === 'archivo').length,
+            entregas_pendientes: entregas.filter(e => e.estado === 'Entregado').length,
+            entregas_calificadas: entregas.filter(e => e.estado === 'Calificado').length,
+            entregas_rechazadas: entregas.filter(e => e.estado === 'Rechazado').length,
+            entregas_en_revision: entregas.filter(e => e.estado === 'En revisión').length,
+            promedio_puntaje: calcularPromedio(entregas.map(e => e.calificacion?.puntaje).filter(Boolean))
+        };
 
         res.json({
             ok: true,
             comision: {
                 id: comisionExiste._id,
-                nombre: comisionExiste.nombre
+                nombre: comisionExiste.nombre,
+                progreso_carrera: comisionExiste.progreso_carrera
             },
             entregas: entregas.map(entrega => ({
                 id: entrega._id,
+                _id: entrega._id,
                 trabajo_nombre: entrega.trabajo_nombre,
                 tipo_entrega: entrega.tipo_entrega,
                 estado: entrega.estado,
@@ -406,15 +458,24 @@ const cargarEntregasDeComision = async (req, res) => {
                 feedback: entrega.feedback,
                 archivo_url: entrega.archivo_url,
                 github_url: entrega.github_url,
-                comentarios: entrega.comentarios
+                comentarios: entrega.comentarios,
+                modulo: entrega.modulo || {
+                    modulo_id: entrega.modulo_id,
+                    nombre: entrega.modulo_nombre,
+                    orden: null
+                },
+                contenido: entrega.contenido || {
+                    contenido_id: entrega.contenido_id,
+                    nombre: entrega.contenido_nombre,
+                    contenido_id_str: entrega.contenido_id
+                },
+                modulo_id: entrega.modulo?.modulo_id || entrega.modulo_id,
+                modulo_nombre: entrega.modulo?.nombre || entrega.modulo_nombre,
+                contenido_id: entrega.contenido?.contenido_id || entrega.contenido_id,
+                contenido_nombre: entrega.contenido?.nombre || entrega.contenido_nombre
             })),
-            paginacion: {
-                total,
-                pagina_actual: parseInt(page),
-                total_paginas: Math.ceil(total / limit),
-                limite: parseInt(limit)
-            },
-            metricas: metricas
+            metricas: metricas,
+            total: entregas.length // Para compatibilidad
         });
 
     } catch (error) {
@@ -426,8 +487,15 @@ const cargarEntregasDeComision = async (req, res) => {
     }
 };
 
+// Función auxiliar para calcular promedio
+const calcularPromedio = (numeros) => {
+    if (!numeros || numeros.length === 0) return 0;
+    const suma = numeros.reduce((acc, num) => acc + num, 0);
+    return Math.round((suma / numeros.length) * 100) / 100;
+};
+
 // ============================================
-// 3. CARGAR TODAS LAS ENTREGAS DE UN USUARIO
+// 3. CARGAR TODAS LAS ENTREGAS DE UN USUARIO (SIN PAGINACIÓN)
 // ============================================
 const cargarEntregasDeUsuario = async (req, res) => {
     try {
@@ -435,9 +503,8 @@ const cargarEntregasDeUsuario = async (req, res) => {
         const {
             comision_id,
             estado,
-            tipo,
-            page = 1,
-            limit = 20
+            tipo
+            // 👇 Eliminamos page y limit
         } = req.query;
 
         if (!usuarioId) {
@@ -471,17 +538,10 @@ const cargarEntregasDeUsuario = async (req, res) => {
         if (estado) filtro.estado = estado;
         if (tipo) filtro.tipo_entrega = tipo;
 
-        const skip = (parseInt(page) - 1) * parseInt(limit);
-
-        const [entregas, total] = await Promise.all([
-            Entregas_Models.find(filtro)
-                .sort({ fecha_entrega: -1 })
-                .skip(skip)
-                .limit(parseInt(limit))
-                .lean(),
-
-            Entregas_Models.countDocuments(filtro)
-        ]);
+        // 👇 SIN PAGINACIÓN - traemos TODAS las entregas
+        const entregas = await Entregas_Models.find(filtro)
+            .sort({ fecha_entrega: -1 })
+            .lean();
 
         const entregasPorComision = {};
         
@@ -498,29 +558,50 @@ const cargarEntregasDeUsuario = async (req, res) => {
             
             entregasPorComision[comisionIdStr].entregas.push({
                 id: entrega._id,
+                _id: entrega._id,
                 trabajo_nombre: entrega.trabajo_nombre,
                 tipo_entrega: entrega.tipo_entrega,
                 estado: entrega.estado,
                 fecha_entrega: entrega.fecha_entrega,
+                alumno: entrega.alumno,
+                es_grupal: entrega.es_grupal,
+                miembros: entrega.miembros,
                 calificacion: entrega.calificacion,
                 feedback: entrega.feedback,
                 archivo_url: entrega.archivo_url,
                 github_url: entrega.github_url,
-                comentarios: entrega.comentarios
+                comentarios: entrega.comentarios,
+                modulo: entrega.modulo || {
+                    modulo_id: entrega.modulo_id,
+                    nombre: entrega.modulo_nombre,
+                    orden: null
+                },
+                contenido: entrega.contenido || {
+                    contenido_id: entrega.contenido_id,
+                    nombre: entrega.contenido_nombre,
+                    contenido_id_str: entrega.contenido_id
+                },
+                modulo_id: entrega.modulo?.modulo_id || entrega.modulo_id,
+                modulo_nombre: entrega.modulo?.nombre || entrega.modulo_nombre,
+                contenido_id: entrega.contenido?.contenido_id || entrega.contenido_id,
+                contenido_nombre: entrega.contenido?.nombre || entrega.contenido_nombre
             });
         });
+
+        // Calcular estadísticas
+        const totalEntregas = entregas.length;
+        const calificadas = entregas.filter(e => e.estado === 'Calificado').length;
 
         res.json({
             ok: true,
             usuario_id: usuarioId,
-            total_entregas: total,
+            total_entregas: totalEntregas,
+            calificadas: calificadas,
             entregas_por_comision: Object.values(entregasPorComision),
-            paginacion: {
-                total,
-                pagina_actual: parseInt(page),
-                total_paginas: Math.ceil(total / limit),
-                limite: parseInt(limit)
-            }
+            todas_las_entregas: entregas.map(entrega => ({ // Opcional: todas planas
+                id: entrega._id,
+                ...entrega
+            }))
         });
 
     } catch (error) {
@@ -580,7 +661,7 @@ const calificarEntrega = async (req, res) => {
         const { id } = req.params;
         const { puntaje, comentario, estado } = req.body;
 
-        
+
 
         // ===== 1. VALIDACIONES BÁSICAS (SIN BD) =====
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -627,7 +708,7 @@ const calificarEntrega = async (req, res) => {
 
         // ===== 2. VERIFICAR QUE LA ENTREGA EXISTE Y OBTENER SU ESTADO ACTUAL =====
         const entrega = await Entregas_Models.findById(id).lean();
-        
+
         if (!entrega) {
             return res.status(404).json({
                 success: false,
@@ -657,7 +738,7 @@ const calificarEntrega = async (req, res) => {
 
         // ===== 4. PREPARAR DATOS DE ACTUALIZACIÓN =====
         const calificadoPorId = req.id || req.usuario?._id;
-        
+
         // Objeto de actualización
         const updateData = {
             'calificacion.puntaje': puntaje,
@@ -693,7 +774,7 @@ const calificarEntrega = async (req, res) => {
                 $set: updateData,
                 ...pushToHistory  // Agregar al historial
             },
-            { 
+            {
                 new: true,
                 runValidators: true,
                 select: '_id trabajo_nombre estado calificacion feedback fecha_entrega'

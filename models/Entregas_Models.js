@@ -67,12 +67,35 @@ const entregaSchema = Schema({
         }
     }],
 
-    // ===== MÓDULO específico (opcional - para flexibilidad) =====
+    // ===== 🆕 MÓDULO ESPECÍFICO =====
     modulo: {
         modulo_id: {
-            type: String  // Puede ser el índice en el array de módulos
+            type: Schema.Types.ObjectId,
+            ref: 'Modulo',  // Asumiendo que tienes un modelo de Módulos
+            index: true
         },
         nombre: {
+            type: String,
+            trim: true
+        },
+        orden: {
+            type: Number
+        }
+    },
+
+    // ===== 🆕 CONTENIDO ESPECÍFICO =====
+    contenido: {
+        contenido_id: {
+            type: Schema.Types.ObjectId,
+            ref: 'Contenido',  // Asumiendo que tienes un modelo de Contenidos
+            index: true
+        },
+        nombre: {
+            type: String,
+            trim: true
+        },
+        // Para mantener consistencia con el ID que viene del front
+        contenido_id_str: {
             type: String,
             trim: true
         }
@@ -109,14 +132,13 @@ const entregaSchema = Schema({
         trim: true,
     },
 
-
     // ===== COMENTARIOS DEL ALUMNO =====
     comentarios: {
         type: String,
         trim: true
     },
 
-    // ===== CALIFICACIÓN (TU ESTRUCTURA MEJORADA) =====
+    // ===== CALIFICACIÓN =====
     calificacion: {
         puntaje: {
             type: Number,
@@ -142,7 +164,7 @@ const entregaSchema = Schema({
         trim: true
     },
 
-    // ===== ESTADO DE LA ENTREGA (TU ENUM MEJORADO) =====
+    // ===== ESTADO DE LA ENTREGA =====
     estado: {
         type: String,
         enum: ["Borrador", "Entregado", "En revisión", "Calificado", "Rechazado", "Modificado"],
@@ -162,13 +184,13 @@ const entregaSchema = Schema({
         index: true
     },
 
-
 }, {
     timestamps: { 
         createdAt: 'fecha_creacion', 
         updatedAt: 'ultima_actualizacion' 
     }
 });
+
 
 
 module.exports = model('Entrega', entregaSchema);
